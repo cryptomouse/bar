@@ -46,6 +46,9 @@ type FileHeaderMagic = @branded Word32
 const fileHeaderMagic = FileHeaderMagic 0x01234567
 
 
+const maxChunkSize = 4096
+
+
 type ArchiveHeader = {
 	magic: ArchiveHeaderMagic
 	version: Version
@@ -164,9 +167,10 @@ func append (afp: *File, filename: *Str8) -> Unit {
 		// error: too long file name for BAR file
 	}
 
+	let fileSize = getFileSize(fp)
 	var fh = FileHeader {
 		magic=fileHeaderMagic
-		size = getFileSize(fp)
+		size = fileSize
 		nameLen = unsafe(Nat16 nameLen)
 	}
 
@@ -182,17 +186,7 @@ func append (afp: *File, filename: *Str8) -> Unit {
 		// error: cannot write filename into archive file
 	}
 
-	var b: Byte
-	while true {
-		if fread(&b, sizeof(Byte), 1, fp) == 0 {
-			break
-		}
-
-		if fwrite(&b, sizeof(Byte), 1, afp) == 0 {
-			break
-		}
-	}
-
+	pump(fp, afp, fileSize)
 	fclose(fp)
 }
 
@@ -253,25 +247,34 @@ func cmdExtract (name: *Str8) -> Unit {
 			return
 		}
 
-		var b: Byte
-		var i: Nat64
-		while i < fh.size {
-			if fread(&b, sizeof(Byte), 1, afp) == 0 {
-				break
-			}
-
-			if fwrite(&b, sizeof(Byte), 1, fp) == 0 {
-				break
-			}
-
-			++i
-		}
-
+		pump(afp, fp, fh.size)
 		fclose(fp)
 	}
 
 	fclose(afp)
 	return
+}
+
+
+func pump (fsrc: *File, fdst: *File, len: Nat64) -> Unit {
+	var buf: [maxChunkSize]Byte
+	var rest = len
+	while rest > 0 {
+		var chunkSize = rest
+		if rest > chunkSize {
+			chunkSize = maxChunkSize
+		}
+
+		if fread(&buf, sizeof(Byte), chunkSize, fsrc) == 0 {
+			break
+		}
+
+		if fwrite(&buf, sizeof(Byte), chunkSize, fdst) == 0 {
+			break
+		}
+
+		rest = rest - chunkSize
+	}
 }
 
 
