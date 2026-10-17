@@ -81,13 +81,15 @@ func main (argc: Int32, argv: *[]*Str8) -> Int32 {
 	//printf("arname = '%s'\n", arname)
 
 	if cmd == 'e' {
-		cmdExtract(arname)
+		cmdExtract(arname, files)
 	} else if cmd == 'c' {
 		cmdCreate(arname, files)
 	} else if cmd == 'a' {
 		cmdAppend(arname, files)
 	} else if cmd == 'd' {
 		cmdDelete(arname, files)
+	} else if cmd == 'l' {
+		cmdList(arname)
 	} else {
 		printf("error: unsupported key -%c\n", cmd)
 		showUsage()
@@ -196,7 +198,7 @@ func cmdDelete (name: *Str8, files: *[]*Str8) -> Unit {
 }
 
 
-func cmdExtract (name: *Str8) -> Unit {
+func cmdExtract (name: *Str8, onlyfiles: *[]*Str8) -> Unit {
 	printf("cmdExtract('%s')\n", name)
 
 	let ax = openArchive(name, "rb")
@@ -222,21 +224,87 @@ func cmdExtract (name: *Str8) -> Unit {
 		var filenamebuf: [2+maxFileNameLen+1]Char8 = "./"
 		readFileName(ax.afp, &filenamebuf[2:], maxFileNameLen)
 
-		printf("EXTRACT: '%s' (%lluB) >\n", &filenamebuf, fh.size)
+		if isFileToExtract(&filenamebuf, onlyfiles) {
+			printf("EXTRACT: '%s' (%lluB) >\n", &filenamebuf, fh.size)
 
-		// 3. Теперь создаем файл и пишем в него данные из архива
-		let fp = fopen(&filenamebuf, "wb")
-		if fp == nil {
-			printf("error: cannot create file '%s'", filenamebuf)
-			return
+			// 3. Теперь создаем файл и пишем в него данные из архива
+			let fp = fopen(&filenamebuf, "wb")
+			if fp == nil {
+				printf("error: cannot create file '%s'", filenamebuf)
+				return
+			}
+
+			pump(ax.afp, fp, fh.size)
+			fclose(fp)
 		}
-
-		pump(ax.afp, fp, fh.size)
-		fclose(fp)
 	}
 
 	fclose(ax.afp)
 	return
+}
+
+
+func getFileInfo (afp: *File) -> {} {
+
+}
+
+
+func cmdList (name: *Str8) -> Unit {
+	printf("cmdList('%s')\n", name)
+
+	let ax = openArchive(name, "rb")
+	if ax.afp == nil {
+		return
+	}
+
+	printf("#\tSIZE\tFILE\n")
+
+	var i: Nat32
+	while true {
+		// 1. Получаем файловый заголовок
+		var fh: FileHeader
+		if fread(&fh, sizeof(FileHeader), 1, ax.afp) == 0 {
+			// end of archive file
+			printf("<reached end of archive file>\n")
+			break
+		}
+
+		//printFileHeader(&fh)
+		if not checkFileHeader(&fh) {
+			// error: invalid file header
+		}
+
+		// 2. Затем вытаскиваем имя файла
+		var filenamebuf: [2+maxFileNameLen+1]Char8 = "./"
+		readFileName(ax.afp, &filenamebuf[2:], maxFileNameLen)
+
+		printf("%u\t%lluB\t%s\n", i, fh.size, &filenamebuf)
+
+		// мотаем вперед
+		fseek(ax.afp, LongInt fh.size, seekCur)
+
+		++i
+	}
+
+	fclose(ax.afp)
+}
+
+
+// if onlyfiles == nil or filename in onlyfiles
+func isFileToExtract (filename: *Str8, onlyfiles: *[]*Str8) -> Bool {
+	return true
+	var i: Nat32 = 0
+	while true {
+		if onlyfiles[i] == nil {
+			return false
+		}
+		if strcmp(filename, onlyfiles[i]) == 0 {
+			return true
+		}
+		++i
+	}
+
+	return false
 }
 
 
@@ -245,7 +313,7 @@ func pump (fsrc: *File, fdst: *File, len: Nat64) -> Unit {
 	var rest = len
 	while rest > 0 {
 		var chunkSize = rest
-		if rest > chunkSize {
+		if rest > maxChunkSize {
 			chunkSize = maxChunkSize
 		}
 
