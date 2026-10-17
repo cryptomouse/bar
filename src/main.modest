@@ -449,6 +449,7 @@ func showUsage () -> Unit {
 	printf("  -c  create archive from files\n")
 	printf("  -a  append files to archive\n")
 	printf("  -e  extract all files from archive\n")
+	printf("  -l  show all files in archive\n")
 	printf("  -d  delete files from archive\n")
 }
 
