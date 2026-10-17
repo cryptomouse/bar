@@ -10,7 +10,7 @@ include "libc/string"
 //  +---------------------------+
 //  |       ArchiveHeader       |
 //  +===========================+ --.
-//  |        FileHeader         |   |
+//  |        SectionHeader         |   |
 //  +---------------------------+   |
 //  |      file name + '\0'     |   |  file #1
 //  +---------------------------+   |
@@ -18,7 +18,7 @@ include "libc/string"
 //  |        file data          |   |
 //  |                           |   |
 //  +===========================+ --+
-//  |        FileHeader         |   |
+//  |        SectionHeader         |   |
 //  +---------------------------+   |
 //  |      file name + '\0'     |   |  file #2
 //  +---------------------------+   |
@@ -33,24 +33,26 @@ public const version: Version = {major = 0, minor = 1}
 
 
 const maxFileNameLen = 256
+const maxChunkSize = 4096
 
 type ArchiveHeaderMagic = @branded Word32
 const archiveHeaderMagic = ArchiveHeaderMagic 0x12abcdef
-
-type FileHeaderMagic = @branded Word32
-const fileHeaderMagic = FileHeaderMagic 0x01234567
-
-
-const maxChunkSize = 4096
-
 
 type ArchiveHeader = {
 	magic: ArchiveHeaderMagic
 	version: Version
 }
 
-type FileHeader = {
-	magic: FileHeaderMagic
+
+type SectionHeaderMagic = @branded Word32
+const sectionHeaderMagic = SectionHeaderMagic 0x01234567
+
+type SectionType = @branded Nat32
+const sectionTypeFile = SectionType 0
+
+type SectionHeader = {
+	magic: SectionHeaderMagic
+    type: SectionType
 	size: Nat64     // file data size in bytes
 	nameLen: Nat16  // filename characters count (without '\0')
 }
@@ -117,14 +119,15 @@ func append (afp: *File, filename: *Str8) -> Unit {
 	}
 
 	let fileSize = getFileSize(fp)
-	var fh = FileHeader {
-		magic=fileHeaderMagic
+	var sh = SectionHeader {
+		magic = sectionHeaderMagic
+        type = sectionTypeFile
 		size = fileSize
 		nameLen = unsafe(Nat16 nameLen)
 	}
 
-	//printFileHeader(&fh)
-	writeFileHeader(afp, &fh)
+	//printSectionHeader(&sh)
+	writeSectionHeader(afp, &sh)
 
 	// write filename + '\0' before file data
 	if fwrite(filename, nameLen, 1, afp) == 0 {
@@ -164,15 +167,15 @@ public func cmdExtract (name: *Str8, onlyfiles: *[]*Str8) -> Unit {
 
 	while true {
 		// 1. Получаем файловый заголовок
-		var fh: FileHeader
-		if fread(&fh, sizeof(FileHeader), 1, ax.afp) == 0 {
+		var sh: SectionHeader
+		if fread(&sh, sizeof(SectionHeader), 1, ax.afp) == 0 {
 			// end of archive file
 			printf("<reached end of archive file>\n")
 			break
 		}
 
-		//printFileHeader(&fh)
-		if not checkFileHeader(&fh) {
+		//printSectionHeader(&sh)
+		if not checkSectionHeader(&sh) {
 			// error: invalid file header
 		}
 
@@ -181,7 +184,7 @@ public func cmdExtract (name: *Str8, onlyfiles: *[]*Str8) -> Unit {
 		readFileName(ax.afp, &filenamebuf[2:], maxFileNameLen)
 
 		if isFileToExtract(&filenamebuf, onlyfiles) {
-			printf("EXTRACT: '%s' (%lluB) >\n", &filenamebuf, fh.size)
+			printf("EXTRACT: '%s' (%lluB) >\n", &filenamebuf, sh.size)
 
 			// 3. Теперь создаем файл и пишем в него данные из архива
 			let fp = fopen(&filenamebuf, "wb")
@@ -190,7 +193,7 @@ public func cmdExtract (name: *Str8, onlyfiles: *[]*Str8) -> Unit {
 				return
 			}
 
-			pump(ax.afp, fp, fh.size)
+			pump(ax.afp, fp, sh.size)
 			fclose(fp)
 		}
 	}
@@ -218,15 +221,15 @@ public func cmdList (name: *Str8) -> Unit {
 	var i: Nat32
 	while true {
 		// 1. Получаем файловый заголовок
-		var fh: FileHeader
-		if fread(&fh, sizeof(FileHeader), 1, ax.afp) == 0 {
+		var sh: SectionHeader
+		if fread(&sh, sizeof(SectionHeader), 1, ax.afp) == 0 {
 			// end of archive file
 			printf("<reached end of archive file>\n")
 			break
 		}
 
-		//printFileHeader(&fh)
-		if not checkFileHeader(&fh) {
+		//printSectionHeader(&sh)
+		if not checkSectionHeader(&sh) {
 			// error: invalid file header
 		}
 
@@ -234,10 +237,10 @@ public func cmdList (name: *Str8) -> Unit {
 		var filenamebuf: [2+maxFileNameLen+1]Char8 = "./"
 		readFileName(ax.afp, &filenamebuf[2:], maxFileNameLen)
 
-		printf("%u\t%lluB\t%s\n", i, fh.size, &filenamebuf)
+		printf("%u\t%lluB\t%s\n", i, sh.size, &filenamebuf)
 
 		// мотаем вперед
-		fseek(ax.afp, LongInt fh.size, seekCur)
+		fseek(ax.afp, LongInt sh.size, seekCur)
 
 		++i
 	}
@@ -336,9 +339,9 @@ func openArchive (filename: *Str8, mode: *Str8) -> {afp: *File, ah: ArchiveHeade
 }
 
 
-func writeFileHeader (afp: *File, fh: *FileHeader) -> Unit {
-	printf("writeFileHeader()\n")
-	if fwrite(fh, sizeof(FileHeader), 1, afp) == 0 {
+func writeSectionHeader (afp: *File, sh: *SectionHeader) -> Unit {
+	printf("writeSectionHeader()\n")
+	if fwrite(sh, sizeof(SectionHeader), 1, afp) == 0 {
 		//
 	}
 }
@@ -368,12 +371,12 @@ func checkArchiveHeader (ah: *ArchiveHeader) -> Bool {
 }
 
 
-func checkFileHeader (fh: *FileHeader) -> Bool {
-	if fh.magic != fileHeaderMagic {
+func checkSectionHeader (sh: *SectionHeader) -> Bool {
+	if sh.magic != sectionHeaderMagic {
 		return false
 	}
 
-	if fh.nameLen == 0 or fh.nameLen > maxFileNameLen {
+	if sh.nameLen == 0 or sh.nameLen > maxFileNameLen {
 		return false
 	}
 
@@ -391,11 +394,11 @@ func printArchiveHeader (ah: *ArchiveHeader) -> Unit {
 
 
 @unused
-func printFileHeader (fh: *FileHeader) -> Unit {
-	printf("FileHeader {\n")
-	printf("    magic = 0x%08x\n", fh.magic)
-	printf("    nameLen = %u\n", Nat32 fh.nameLen)
-	printf("    size = %llu\n", fh.size)
+func printSectionHeader (sh: *SectionHeader) -> Unit {
+	printf("SectionHeader {\n")
+	printf("    magic = 0x%08x\n", sh.magic)
+	printf("    nameLen = %u\n", Nat32 sh.nameLen)
+	printf("    size = %llu\n", sh.size)
 	printf("}\n")
 }
 
