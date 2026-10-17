@@ -57,7 +57,7 @@ type ArchiveHeader = {
 type FileHeader = {
 	magic: FileHeaderMagic
 	size: Nat64     // file data size in bytes
-	nameLen: Nat16  // count without '\0'
+	nameLen: Nat16  // filename characters count (without '\0')
 }
 
 
@@ -125,30 +125,21 @@ func cmdCreate (name: *Str8, files: *[]*Str8) -> Unit {
 func cmdAppend (name: *Str8, files: *[]*Str8) -> Unit {
 	printf("cmdAppend():\n")
 
-	// "ab" is write-only, so the header can't be read back; use "r+b"
-	let afp = fopen(name, "r+b")
-	if afp == nil {
-		printf("error: cannot open file '%s'\n", name)
-		return
-	}
-
-	var ah = readArchiveHeader(afp)
-	if not checkArchiveHeader(&ah) {
-		printf("error: file '%s' isnt a bar archive\n", name)
-		fclose(afp)
+	let ax = openArchive(name, "r+b")
+	if ax.afp == nil {
 		return
 	}
 
 	// switching from reading to writing requires a seek
-	fseek(afp, 0, seekEnd)
+	fseek(ax.afp, 0, seekEnd)
 
 	var i: Int32 = 0
 	while files[i] != nil {
-		append(afp, files[i])
+		append(ax.afp, files[i])
 		++i
 	}
 
-	fclose(afp)
+	fclose(ax.afp)
 }
 
 
@@ -207,23 +198,16 @@ func cmdDelete (name: *Str8, files: *[]*Str8) -> Unit {
 
 func cmdExtract (name: *Str8) -> Unit {
 	printf("cmdExtract('%s')\n", name)
-	let afp = fopen(name, "rb")
-	if afp == nil {
-		printf("error: cannot open file '%s'", name)
-		return
-	}
 
-	var ah = readArchiveHeader(afp)
-	if not checkArchiveHeader(&ah) {
-		printf("error: file '%s' isnt a bar archive", name)
-		fclose(afp)
+	let ax = openArchive(name, "rb")
+	if ax.afp == nil {
 		return
 	}
 
 	while true {
 		// 1. Получаем файловый заголовок
 		var fh: FileHeader
-		if fread(&fh, sizeof(FileHeader), 1, afp) == 0 {
+		if fread(&fh, sizeof(FileHeader), 1, ax.afp) == 0 {
 			// end of archive file
 			printf("<reached end of archive file>\n")
 			break
@@ -236,7 +220,7 @@ func cmdExtract (name: *Str8) -> Unit {
 
 		// 2. Затем вытаскиваем имя файла
 		var filenamebuf: [2+maxFileNameLen+1]Char8 = "./"
-		readFileName(afp, &filenamebuf[2:], maxFileNameLen)
+		readFileName(ax.afp, &filenamebuf[2:], maxFileNameLen)
 
 		printf("EXTRACT: '%s' (%lluB) >\n", &filenamebuf, fh.size)
 
@@ -247,11 +231,11 @@ func cmdExtract (name: *Str8) -> Unit {
 			return
 		}
 
-		pump(afp, fp, fh.size)
+		pump(ax.afp, fp, fh.size)
 		fclose(fp)
 	}
 
-	fclose(afp)
+	fclose(ax.afp)
 	return
 }
 
@@ -307,6 +291,24 @@ func getFileSize (fp: *File) -> Nat64 {
 	let size = ftell(fp)
 	fseek(fp, 0, seekSet)
 	return unsafe(Nat64 size)
+}
+
+
+func openArchive (filename: *Str8, mode: *Str8) -> {afp: *File, ah: ArchiveHeader} {
+	let afp = fopen(filename, mode)
+	if afp == nil {
+		printf("error: cannot open archive file '%s'\n", filename)
+		return {afp=afp, ah={}}
+	}
+
+	var ah = readArchiveHeader(afp)
+	if not checkArchiveHeader(&ah) {
+		printf("error: file '%s' isnt a bar archive\n", filename)
+		fclose(afp)
+		return {afp=nil, ah=ah}
+	}
+
+	return {afp=afp, ah=ah}
 }
 
 
