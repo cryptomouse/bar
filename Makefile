@@ -17,19 +17,19 @@ test: Modest LLVM C
 
 Modest:
 	modest -o $(MODESTPREFIX)/main -mbackend=modest $(INDIR)/main.modest
-	#modest -o $(MODESTPREFIX)/lib -mbackend=modest $(INDIR)/lib.modest
+	modest -o $(MODESTPREFIX)/bar -mbackend=modest $(INDIR)/bar.modest
 
 
 LLVM:
 	modest -o $(LLVMPREFIX)/main -mbackend=llvm $(INDIR)/main.modest
-	#modest -o $(LLVMPREFIX)/lib -mbackend=llvm $(INDIR)/lib.modest
-	clang -o bar $(LLVMPREFIX)/main.ll $(LLVMPREFIX)/lib.ll
+	modest -o $(LLVMPREFIX)/bar -mbackend=llvm $(INDIR)/bar.modest
+	clang -o bar $(LLVMPREFIX)/main.ll $(LLVMPREFIX)/bar.ll
 
 
 C:
 	modest -o $(CPREFIX)/main -mbackend=c11 $(INDIR)/main.modest
-	#modest -o $(CPREFIX)/lib -mbackend=c11 $(INDIR)/lib.modest
-	clang -o bar $(C_OPTIONS) $(CPREFIX)/main.c $(CPREFIX)/lib.c
+	modest -o $(CPREFIX)/bar -mbackend=c11 $(INDIR)/bar.modest
+	clang -o bar $(C_OPTIONS) $(CPREFIX)/main.c $(CPREFIX)/bar.c
 
 
 clean:

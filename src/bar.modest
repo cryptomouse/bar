@@ -1,0 +1,401 @@
+
+pragma unsafe
+
+include "libc/ctypes64"
+include "libc/stdio"
+include "libc/string"
+
+//  BAR file layout:
+//
+//  +---------------------------+
+//  |       ArchiveHeader       |
+//  +===========================+ --.
+//  |        FileHeader         |   |
+//  +---------------------------+   |
+//  |      file name + '\0'     |   |  file #1
+//  +---------------------------+   |
+//  |                           |   |
+//  |        file data          |   |
+//  |                           |   |
+//  +===========================+ --+
+//  |        FileHeader         |   |
+//  +---------------------------+   |
+//  |      file name + '\0'     |   |  file #2
+//  +---------------------------+   |
+//  |        file data          |   |
+//  +===========================+ --'
+//  |            ...            |
+//  +---------------------------+
+
+public type Version = @public {major: Nat16, minor: Nat16}
+
+public const version: Version = {major = 0, minor = 1}
+
+
+const maxFileNameLen = 256
+
+type ArchiveHeaderMagic = @branded Word32
+const archiveHeaderMagic = ArchiveHeaderMagic 0x12abcdef
+
+type FileHeaderMagic = @branded Word32
+const fileHeaderMagic = FileHeaderMagic 0x01234567
+
+
+const maxChunkSize = 4096
+
+
+type ArchiveHeader = {
+	magic: ArchiveHeaderMagic
+	version: Version
+}
+
+type FileHeader = {
+	magic: FileHeaderMagic
+	size: Nat64     // file data size in bytes
+	nameLen: Nat16  // filename characters count (without '\0')
+}
+
+
+public func cmdCreate (name: *Str8, files: *[]*Str8) -> Unit {
+	printf("cmdCreate():\n")
+
+	let afp = fopen(name, "wb")
+	if afp == nil {
+		printf("error: cannot create file '%s'", name)
+		return
+	}
+
+	var ah: ArchiveHeader = {
+		magic = archiveHeaderMagic
+		version = version
+	}
+
+	if fwrite(&ah, sizeof(ArchiveHeader), 1, afp) == 0 {
+		// error
+	}
+
+	fclose(afp)
+
+	cmdAppend(name, files)
+}
+
+
+public func cmdAppend (name: *Str8, files: *[]*Str8) -> Unit {
+	printf("cmdAppend():\n")
+
+	let ax = openArchive(name, "r+b")
+	if ax.afp == nil {
+		return
+	}
+
+	// switching from reading to writing requires a seek
+	fseek(ax.afp, 0, seekEnd)
+
+	var i: Int32 = 0
+	while files[i] != nil {
+		append(ax.afp, files[i])
+		++i
+	}
+
+	fclose(ax.afp)
+}
+
+
+func append (afp: *File, filename: *Str8) -> Unit {
+	printf("append('%s')\n", filename)
+
+	let fp = fopen(filename, "rb")
+	if fp == nil {
+		printf("error: cannot open file '%s'", filename)
+		return
+	}
+
+	let nameLen = strlen(filename)
+
+	if nameLen > maxFileNameLen {
+		// error: too long file name for BAR file
+	}
+
+	let fileSize = getFileSize(fp)
+	var fh = FileHeader {
+		magic=fileHeaderMagic
+		size = fileSize
+		nameLen = unsafe(Nat16 nameLen)
+	}
+
+	//printFileHeader(&fh)
+	writeFileHeader(afp, &fh)
+
+	// write filename + '\0' before file data
+	if fwrite(filename, nameLen, 1, afp) == 0 {
+		// error: cannot write filename into archive file
+	}
+	var zeroChar: Char8 = '\0'
+	if fwrite(&zeroChar, sizeof(zeroChar), 1, afp) == 0 {
+		// error: cannot write filename into archive file
+	}
+
+	pump(fp, afp, fileSize)
+	fclose(fp)
+}
+
+
+public func cmdDelete (name: *Str8, files: *[]*Str8) -> Unit {
+	printf("cmdDelete():\n")
+	var i: Int32 = 0
+	while true {
+		let srcname = files[i]
+		if srcname == nil {
+			return
+		}
+		printf("+ file: %s\n", files[i])
+		++i
+	}
+}
+
+
+public func cmdExtract (name: *Str8, onlyfiles: *[]*Str8) -> Unit {
+	printf("cmdExtract('%s')\n", name)
+
+	let ax = openArchive(name, "rb")
+	if ax.afp == nil {
+		return
+	}
+
+	while true {
+		// 1. Получаем файловый заголовок
+		var fh: FileHeader
+		if fread(&fh, sizeof(FileHeader), 1, ax.afp) == 0 {
+			// end of archive file
+			printf("<reached end of archive file>\n")
+			break
+		}
+
+		//printFileHeader(&fh)
+		if not checkFileHeader(&fh) {
+			// error: invalid file header
+		}
+
+		// 2. Затем вытаскиваем имя файла
+		var filenamebuf: [2+maxFileNameLen+1]Char8 = "./"
+		readFileName(ax.afp, &filenamebuf[2:], maxFileNameLen)
+
+		if isFileToExtract(&filenamebuf, onlyfiles) {
+			printf("EXTRACT: '%s' (%lluB) >\n", &filenamebuf, fh.size)
+
+			// 3. Теперь создаем файл и пишем в него данные из архива
+			let fp = fopen(&filenamebuf, "wb")
+			if fp == nil {
+				printf("error: cannot create file '%s'", filenamebuf)
+				return
+			}
+
+			pump(ax.afp, fp, fh.size)
+			fclose(fp)
+		}
+	}
+
+	fclose(ax.afp)
+	return
+}
+
+
+func getFileInfo (afp: *File) -> {} {
+
+}
+
+
+public func cmdList (name: *Str8) -> Unit {
+	printf("cmdList('%s')\n", name)
+
+	let ax = openArchive(name, "rb")
+	if ax.afp == nil {
+		return
+	}
+
+	printf("#\tSIZE\tFILE\n")
+
+	var i: Nat32
+	while true {
+		// 1. Получаем файловый заголовок
+		var fh: FileHeader
+		if fread(&fh, sizeof(FileHeader), 1, ax.afp) == 0 {
+			// end of archive file
+			printf("<reached end of archive file>\n")
+			break
+		}
+
+		//printFileHeader(&fh)
+		if not checkFileHeader(&fh) {
+			// error: invalid file header
+		}
+
+		// 2. Затем вытаскиваем имя файла
+		var filenamebuf: [2+maxFileNameLen+1]Char8 = "./"
+		readFileName(ax.afp, &filenamebuf[2:], maxFileNameLen)
+
+		printf("%u\t%lluB\t%s\n", i, fh.size, &filenamebuf)
+
+		// мотаем вперед
+		fseek(ax.afp, LongInt fh.size, seekCur)
+
+		++i
+	}
+
+	fclose(ax.afp)
+}
+
+
+// if onlyfiles == nil or filename in onlyfiles
+func isFileToExtract (filename: *Str8, onlyfiles: *[]*Str8) -> Bool {
+	return true
+	var i: Nat32 = 0
+	while true {
+		if onlyfiles[i] == nil {
+			return false
+		}
+		if strcmp(filename, onlyfiles[i]) == 0 {
+			return true
+		}
+		++i
+	}
+
+	return false
+}
+
+
+func pump (fsrc: *File, fdst: *File, len: Nat64) -> Unit {
+	var buf: [maxChunkSize]Byte
+	var rest = len
+	while rest > 0 {
+		var chunkSize = rest
+		if rest > maxChunkSize {
+			chunkSize = maxChunkSize
+		}
+
+		if fread(&buf, sizeof(Byte), chunkSize, fsrc) == 0 {
+			break
+		}
+
+		if fwrite(&buf, sizeof(Byte), chunkSize, fdst) == 0 {
+			break
+		}
+
+		rest = rest - chunkSize
+	}
+}
+
+
+func readFileName (afp: *File, fnamebuf: *[]Char8, limit: Nat32) -> Unit {
+	var c: Char8
+	var i: Nat32
+	while true {
+		if fread(&c, sizeof(Byte), 1, afp) == 0 {
+			// error: cannot read filename character
+			break
+		}
+		if i == limit {
+			if c != '\0' {
+				// error: filename is too long
+			}
+			break
+		}
+		fnamebuf[i] = c
+		if c == '\0' {
+			break
+		}
+		++i
+	}
+	fnamebuf[i] = '\0'
+}
+
+
+func getFileSize (fp: *File) -> Nat64 {
+	fseek(fp, 0, seekEnd)
+	let size = ftell(fp)
+	fseek(fp, 0, seekSet)
+	return unsafe(Nat64 size)
+}
+
+
+func openArchive (filename: *Str8, mode: *Str8) -> {afp: *File, ah: ArchiveHeader} {
+	let afp = fopen(filename, mode)
+	if afp == nil {
+		printf("error: cannot open archive file '%s'\n", filename)
+		return {afp=afp, ah={}}
+	}
+
+	var ah = readArchiveHeader(afp)
+	if not checkArchiveHeader(&ah) {
+		printf("error: file '%s' isnt a bar archive\n", filename)
+		fclose(afp)
+		return {afp=nil, ah=ah}
+	}
+
+	return {afp=afp, ah=ah}
+}
+
+
+func writeFileHeader (afp: *File, fh: *FileHeader) -> Unit {
+	printf("writeFileHeader()\n")
+	if fwrite(fh, sizeof(FileHeader), 1, afp) == 0 {
+		//
+	}
+}
+
+
+func readArchiveHeader (afp: *File) -> ArchiveHeader {
+	var ah: ArchiveHeader
+	if fread(&ah, sizeof(ArchiveHeader), 1, afp) == 0 {
+		// error cannot read archive header
+	}
+	return ah
+}
+
+
+func checkVersion (v: Version) -> Bool {
+	if v.major < version.major {
+		return true
+	} else if v.major == version.major {
+		return v.minor <= version.minor
+	}
+	return false
+}
+
+
+func checkArchiveHeader (ah: *ArchiveHeader) -> Bool {
+	return ah.magic == archiveHeaderMagic and checkVersion(ah.version)
+}
+
+
+func checkFileHeader (fh: *FileHeader) -> Bool {
+	if fh.magic != fileHeaderMagic {
+		return false
+	}
+
+	if fh.nameLen == 0 or fh.nameLen > maxFileNameLen {
+		return false
+	}
+
+	return true
+}
+
+
+@unused
+func printArchiveHeader (ah: *ArchiveHeader) -> Unit {
+	printf("ArchiveHeader {\n")
+	printf("    magic = 0x%08x\n", ah.magic)
+	printf("    version = %u.%u\n", ah.version.major, ah.version.minor)
+	printf("}\n")
+}
+
+
+@unused
+func printFileHeader (fh: *FileHeader) -> Unit {
+	printf("FileHeader {\n")
+	printf("    magic = 0x%08x\n", fh.magic)
+	printf("    nameLen = %u\n", Nat32 fh.nameLen)
+	printf("    size = %llu\n", fh.size)
+	printf("}\n")
+}
+
