@@ -35,6 +35,7 @@ public const version: Version = {major = 0, minor = 1}
 const maxFileNameLen = 256
 const maxChunkSize = 4096
 
+
 type ArchiveHeaderMagic = @branded Word32
 const archiveHeaderMagic = ArchiveHeaderMagic 0x12abcdef
 
@@ -49,6 +50,7 @@ const sectionHeaderMagic = SectionHeaderMagic 0x01234567
 
 type SectionType = @branded Nat32
 const sectionTypeFile = SectionType 0
+
 
 type SectionHeader = {
 	magic: SectionHeaderMagic
@@ -183,19 +185,26 @@ public func cmdExtract (name: *Str8, onlyfiles: *[]*Str8) -> Unit {
 		var filenamebuf: [2+maxFileNameLen+1]Char8 = "./"
 		readFileName(ax.afp, &filenamebuf[2:], maxFileNameLen)
 
-		if isFileToExtract(&filenamebuf, onlyfiles) {
-			printf("EXTRACT: '%s' (%lluB) >\n", &filenamebuf, sh.size)
+        printf("SEE %s\n", &filenamebuf)
 
-			// 3. Теперь создаем файл и пишем в него данные из архива
-			let fp = fopen(&filenamebuf, "wb")
-			if fp == nil {
-				printf("error: cannot create file '%s'", filenamebuf)
-				return
-			}
+		if not isFileToExtract(&filenamebuf[2:], onlyfiles) {
+            // перемотка на след файл
+            fseek(ax.afp, LongInt sh.size, seekCur)
+            again
+        }
 
-			pump(ax.afp, fp, sh.size)
-			fclose(fp)
-		}
+        printf("EXTRACT: '%s' (%lluB) >\n", &filenamebuf, sh.size)
+
+        // 3. Теперь создаем файл и пишем в него данные из архива
+        let fp = fopen(&filenamebuf, "wb")
+        if fp == nil {
+            printf("error: cannot create file '%s'", filenamebuf)
+            return
+        }
+
+        pump(ax.afp, fp, sh.size)
+        fclose(fp)
+
 	}
 
 	fclose(ax.afp)
@@ -251,7 +260,11 @@ public func cmdList (name: *Str8) -> Unit {
 
 // if onlyfiles == nil or filename in onlyfiles
 func isFileToExtract (filename: *Str8, onlyfiles: *[]*Str8) -> Bool {
-	return true
+    if onlyfiles[0] == nil {
+        // There is no specified files, extract all
+        return true
+    }
+
 	var i: Nat32 = 0
 	while true {
 		if onlyfiles[i] == nil {
