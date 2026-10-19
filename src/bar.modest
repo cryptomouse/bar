@@ -8,28 +8,34 @@ include "libc/string"
 //  BAR file layout:
 //
 //  +---------------------------+
-//  |       ArchiveHeader       |
+//  |	   ArchiveHeader	   |
 //  +===========================+ --.
-//  |        SectionHeader      |   |
+//  |		SectionHeader	  |   |
 //  +---------------------------+   |
-//  |      file name + '\0'     |   |  file #1
+//  |	  file name + '\0'	 |   |  file #1
 //  +---------------------------+   |
-//  |                           |   |
-//  |        file data          |   |
-//  |                           |   |
+//  |						   |   |
+//  |		file data		  |   |
+//  |						   |   |
 //  +===========================+ --+
-//  |        SectionHeader      |   |
+//  |		SectionHeader	  |   |
 //  +---------------------------+   |
-//  |      file name + '\0'     |   |  file #2
+//  |	  file name + '\0'	 |   |  file #2
 //  +---------------------------+   |
-//  |        file data          |   |
+//  |		file data		  |   |
 //  +===========================+ --'
-//  |            ...            |
+//  |			...			|
 //  +---------------------------+
 
 public type Version = @public {major: Nat16, minor: Nat16}
+public type VersionRange = @public {begin: Version, end: Version}
 
 public const version: Version = {major = 0, minor = 1}
+
+public const supportedVersionRange: VersionRange = {
+    begin = {major = 0, minor = 0}
+    end = {major = 0, minor = 1}
+}
 
 
 const maxFileNameLen = 256
@@ -54,8 +60,8 @@ const sectionTypeFile = SectionType 0
 
 type SectionHeader = {
 	magic: SectionHeaderMagic
-    type: SectionType
-	size: Nat64     // file data size in bytes
+	type: SectionType
+	size: Nat64	 // file data size in bytes
 	nameLen: Nat16  // filename characters count (without '\0')
 }
 
@@ -123,7 +129,7 @@ func append (afp: *File, filename: *Str8) -> Unit {
 	let fileSize = getFileSize(fp)
 	var sh = SectionHeader {
 		magic = sectionHeaderMagic
-        type = sectionTypeFile
+		type = sectionTypeFile
 		size = fileSize
 		nameLen = unsafe(Nat16 nameLen)
 	}
@@ -185,25 +191,25 @@ public func cmdExtract (name: *Str8, onlyfiles: *[]*Str8) -> Unit {
 		var filenamebuf: [2+maxFileNameLen+1]Char8 = "./"
 		readFileName(ax.afp, &filenamebuf[2:], maxFileNameLen)
 
-        printf("SEE %s\n", &filenamebuf)
+		printf("SEE %s\n", &filenamebuf)
 
 		if not isFileToExtract(&filenamebuf[2:], onlyfiles) {
-            // перемотка на след файл
-            fseek(ax.afp, LongInt sh.size, seekCur)
-            again
-        }
+			// перемотка на след файл
+			fseek(ax.afp, LongInt sh.size, seekCur)
+			again
+		}
 
-        printf("EXTRACT: '%s' (%lluB) >\n", &filenamebuf, sh.size)
+		printf("EXTRACT: '%s' (%lluB) >\n", &filenamebuf, sh.size)
 
-        // 3. Теперь создаем файл и пишем в него данные из архива
-        let fp = fopen(&filenamebuf, "wb")
-        if fp == nil {
-            printf("error: cannot create file '%s'", filenamebuf)
-            return
-        }
+		// 3. Теперь создаем файл и пишем в него данные из архива
+		let fp = fopen(&filenamebuf, "wb")
+		if fp == nil {
+			printf("error: cannot create file '%s'", filenamebuf)
+			return
+		}
 
-        pump(ax.afp, fp, sh.size)
-        fclose(fp)
+		pump(ax.afp, fp, sh.size)
+		fclose(fp)
 
 	}
 
@@ -260,10 +266,10 @@ public func cmdList (name: *Str8) -> Unit {
 
 // if onlyfiles == nil or filename in onlyfiles
 func isFileToExtract (filename: *Str8, onlyfiles: *[]*Str8) -> Bool {
-    if onlyfiles[0] == nil {
-        // There is no specified files, extract all
-        return true
-    }
+	if onlyfiles[0] == nil {
+		// There is no specified files, extract all
+		return true
+	}
 
 	var i: Nat32 = 0
 	while true {
@@ -369,18 +375,9 @@ func readArchiveHeader (afp: *File) -> ArchiveHeader {
 }
 
 
-func checkVersion (v: Version) -> Bool {
-	if v.major < version.major {
-		return true
-	} else if v.major == version.major {
-		return v.minor <= version.minor
-	}
-	return false
-}
-
-
 func checkArchiveHeader (ah: *ArchiveHeader) -> Bool {
-	return ah.magic == archiveHeaderMagic and checkVersion(ah.version)
+	return ah.magic == archiveHeaderMagic and
+        isVersionInRange(ah.version, supportedVersionRange)
 }
 
 
@@ -409,9 +406,36 @@ func printArchiveHeader (ah: *ArchiveHeader) -> Unit {
 @unused
 func printSectionHeader (sh: *SectionHeader) -> Unit {
 	printf("SectionHeader {\n")
-	printf("    magic = 0x%08x\n", sh.magic)
-	printf("    nameLen = %u\n", Nat32 sh.nameLen)
-	printf("    size = %llu\n", sh.size)
+	printf("   magic = 0x%08x\n", sh.magic)
+	printf("   nameLen = %u\n", Nat32 sh.nameLen)
+	printf("   size = %llu\n", sh.size)
 	printf("}\n")
+}
+
+
+
+func isVersionInRange (v: Version, range: VersionRange) -> Bool  {
+	return versionIsGreaterOrEqual(v, range.begin) and
+		versionIsLessOrEqual(v, range.end)
+}
+
+
+func versionIsLessOrEqual (v: Version, w: Version) -> Bool {
+	if v.major < w.major {
+		return true
+	} else if v.major == w.major {
+		return v.minor <= w.minor
+	}
+	return false
+}
+
+
+func versionIsGreaterOrEqual (v: Version, w: Version) -> Bool {
+	if v.major > w.major {
+		return true
+	} else if v.major == w.major {
+		return v.minor >= w.minor
+	}
+	return false
 }
 
