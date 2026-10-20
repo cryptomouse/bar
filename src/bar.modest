@@ -8,23 +8,23 @@ include "libc/string"
 //  BAR file layout:
 //
 //  +---------------------------+
-//  |	   ArchiveHeader	   |
+//  |       ArchiveHeader       |
 //  +===========================+ --.
-//  |		SectionHeader	  |   |
+//  |        SectionHeader      |   |
 //  +---------------------------+   |
-//  |	  file name + '\0'	 |   |  file #1
+//  |      file name + '\0'     |   |  file #1
 //  +---------------------------+   |
-//  |						   |   |
-//  |		file data		  |   |
-//  |						   |   |
+//  |                           |   |
+//  |        file data          |   |
+//  |                           |   |
 //  +===========================+ --+
-//  |		SectionHeader	  |   |
+//  |        SectionHeader      |   |
 //  +---------------------------+   |
-//  |	  file name + '\0'	 |   |  file #2
+//  |      file name + '\0'     |   |  file #2
 //  +---------------------------+   |
-//  |		file data		  |   |
+//  |        file data          |   |
 //  +===========================+ --'
-//  |			...			|
+//  |            ...            |
 //  +---------------------------+
 
 public type Version = @public {major: Nat16, minor: Nat16}
