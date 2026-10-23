@@ -27,6 +27,7 @@ include "libc/string"
 //  |            ...            |
 //  +---------------------------+
 
+
 public type Version = @public {major: Nat16, minor: Nat16}
 public type VersionRange = @public {begin: Version, end: Version}
 
@@ -50,18 +51,16 @@ type ArchiveHeader = {
 	version: Version
 }
 
-
 type SectionHeaderMagic = @branded Word32
 const sectionHeaderMagic = SectionHeaderMagic 0x01234567
 
 type SectionType = @branded Nat32
 const sectionTypeFile = SectionType 0
 
-
 type SectionHeader = {
 	magic: SectionHeaderMagic
 	type: SectionType
-	size: Nat64	 // file data size in bytes
+	size: Nat64	    // file data size in bytes
 	nameLen: Nat16  // filename characters count (without '\0')
 }
 
@@ -104,7 +103,7 @@ public func cmdAppend (name: *Str8, files: *[]*Str8) -> Unit {
 	var i: Int32 = 0
 	while files[i] != nil {
 		append(ax.afp, files[i])
-		++i
+		i += 1
 	}
 
 	fclose(ax.afp)
@@ -160,7 +159,7 @@ public func cmdDelete (name: *Str8, files: *[]*Str8) -> Unit {
 			return
 		}
 		printf("+ file: %s\n", files[i])
-		++i
+		i += 1
 	}
 }
 
@@ -210,16 +209,10 @@ public func cmdExtract (name: *Str8, onlyfiles: *[]*Str8) -> Unit {
 
 		pump(ax.afp, fp, sh.size)
 		fclose(fp)
-
 	}
 
 	fclose(ax.afp)
 	return
-}
-
-
-func getFileInfo (afp: *File) -> {} {
-
 }
 
 
@@ -257,7 +250,7 @@ public func cmdList (name: *Str8) -> Unit {
 		// мотаем вперед
 		fseek(ax.afp, LongInt sh.size, seekCur)
 
-		++i
+		i += 1
 	}
 
 	fclose(ax.afp)
@@ -279,7 +272,7 @@ func isFileToExtract (filename: *Str8, onlyfiles: *[]*Str8) -> Bool {
 		if strcmp(filename, onlyfiles[i]) == 0 {
 			return true
 		}
-		++i
+		i += 1
 	}
 
 	return false
@@ -326,7 +319,7 @@ func readFileName (afp: *File, fnamebuf: *[]Char8, limit: Nat32) -> Unit {
 		if c == '\0' {
 			break
 		}
-		++i
+		i += 1
 	}
 	fnamebuf[i] = '\0'
 }
