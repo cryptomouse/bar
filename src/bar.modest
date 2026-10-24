@@ -5,6 +5,8 @@ include "libc/ctypes64"
 include "libc/stdio"
 include "libc/string"
 
+import "fs"
+
 //  BAR file layout:
 //
 //  +---------------------------+
@@ -187,18 +189,24 @@ public func cmdExtract (name: *Str8, onlyfiles: *[]*Str8) -> Unit {
 		}
 
 		// 2. Затем вытаскиваем имя файла
-		var filenamebuf: [2+maxFileNameLen+1]Char8 = "./"
-		readFileName(ax.afp, &filenamebuf[2:], maxFileNameLen)
+		var filenamebuf: [maxFileNameLen+1]Char8
+		readFileName(ax.afp, &filenamebuf, maxFileNameLen)
 
 		printf("SEE %s\n", &filenamebuf)
 
-		if not isFileToExtract(&filenamebuf[2:], onlyfiles) {
+		if not isFileToExtract(&filenamebuf, onlyfiles) {
 			// перемотка на след файл
 			fseek(ax.afp, LongInt sh.size, seekCur)
 			again
 		}
 
 		printf("EXTRACT: '%s' (%lluB) >\n", &filenamebuf, sh.size)
+
+		if not createPathFor(&filenamebuf) {
+			// не удалось создать директории - пропускаем файл
+			fseek(ax.afp, LongInt sh.size, seekCur)
+			again
+		}
 
 		// 3. Теперь создаем файл и пишем в него данные из архива
 		let fp = fopen(&filenamebuf, "wb")
@@ -255,6 +263,40 @@ public func cmdList (name: *Str8) -> Unit {
 
 	fclose(ax.afp)
 }
+
+
+// 0755: rwx для владельца, r-x для остальных
+const dirMode = Word16 0x1ED
+
+
+// Создает все промежуточные директории для файла filename
+// (например, для "a/b/c.txt" - директории "a" и "a/b")
+func createPathFor (filename: *[]Char8) -> Bool {
+	// копируем filename, запоминая позицию последнего '/'
+	var path: [maxFileNameLen+1]Char8
+	var lastSlash: Nat32 = 0
+	var i: Nat32 = 0
+	while filename[i] != '\x00' and i < maxFileNameLen {
+		path[i] = filename[i]
+		if filename[i] == '/' {
+			lastSlash = i
+		}
+		i += 1
+	}
+
+	// нет директорий в пути ("c.txt", "/c.txt")
+	if lastSlash == 0 {
+		return true
+	}
+
+	path[lastSlash] = '\x00'
+	if not fs.mkdirAll(&path, dirMode) {
+		printf("error: cannot create directory '%s'\n", &path)
+		return false
+	}
+	return true
+}
+
 
 
 // if onlyfiles == nil or filename in onlyfiles
